@@ -10,24 +10,14 @@ app.get('/', function(req, res) {
     res.send("ok.");
 });
 
-app.post('/', (req, res) => {
-    let jscode = req.body.jscode;
-
-    if (!jscode) {
-        return res.status(400).send("jscode missing in request body");
-    }
-
+app.post('/', function(req, res) {
+    var jscode = req.body.jscode;
     jscode = jscode.replace("/aes.js", "https://pastebin.com/raw/pKrFHFzf");
-    jscode = jscode.replace(/location\.href/g, "var uselessvar12345");
-
-    const dom = new JSDOM(jscode, {
-        runScripts: "dangerously",
-        resources: "usable"
-    });
-
-    setTimeout(() => {
-        res.send(dom.window.document.cookie || "No cookies set.");
-    }, 500);
+    jscode = jscode.replace("location.href", "var uselessvar12345");
+    jscode = new JSDOM(jscode, { runScripts: "dangerously", resources: "usable" });
+    setTimeout(function() {
+    res.send(jscode.window.document.cookie)}, 500);
+    return;
 });
 
 const listener = app.listen(process.env.PORT, function() {
