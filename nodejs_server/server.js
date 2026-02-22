@@ -1,65 +1,130 @@
 const express = require('express');
-const app = express();
-var bodyParser = require('body-parser');
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-const jsdom = require("jsdom");
-const { JSDOM } = jsdom;
+const bodyParser = require('body-parser');
+const jsdom = require('jsdom');
+const { JSDOM, VirtualConsole } = jsdom;
 
-app.get('/', function(req, res) {
-    res.send("ok.");
+const app = express();
+const PORT = 3000;
+
+app.use(bodyParser.json({ limit: "2mb" }));
+app.use(bodyParser.urlencoded({ extended: true, limit: "2mb" }));
+
+app.get('/', (req, res) => {
+    res.send("Cookie Execution Server Running.");
 });
 
-app.post('/', async function(req, res) {
+app.post('/', async (req, res) => {
     const startTime = Date.now();
 
     try {
-        console.log("Incoming request...");
+        let html = req.body.jscode;
 
-        let jscode = req.body.jscode;
-
-        if (!jscode || typeof jscode !== "string") {
-            console.error("Invalid or missing jscode");
+        if (!html || typeof html !== "string") {
             return res.status(400).json({
                 success: false,
                 error: "jscode missing or invalid"
             });
         }
 
-        console.log("Original length:", jscode.length);
+        console.log("Incoming HTML length:", html.length);
 
-        // Replace AES path
-        jscode = jscode.replace(
+        // Replace AES path if exists
+        html = html.replace(
             "/aes.js",
             "https://pastebin.com/raw/pKrFHFzf"
         );
 
-        // Disable redirect
-        jscode = jscode.replace(
-            /location\.href/g,
-            "var disabledRedirect"
-        );
+        // Remove static redirects
+        html = html.replace(/location\.href\s*=\s*.*?;/g, "");
 
-        console.log("Modified length:", jscode.length);
+        // Inject redirect blocker + cookie viewer
+        const injection = `
+        <script>
+        (function(){
+            try {
+                Object.defineProperty(window, 'location', {
+                    value: {
+                        href: '',
+                        assign: function(){},
+                        replace: function(){}
+                    },
+                    writable: false
+                });
+            } catch(e){}
 
-        const dom = new JSDOM(jscode, {
+            setTimeout(function(){
+                document.body.innerHTML += 
+                    "<hr><h2>Generated Cookies</h2><pre>" 
+                    + document.cookie + "</pre>";
+                console.log("Cookies:", document.cookie);
+            }, 800);
+        })();
+        </script>
+        `;
+
+        if (html.includes("</body>")) {
+            html = html.replace("</body>", injection + "</body>");
+        } else {
+            html += injection;
+        }
+
+        const virtualConsole = new VirtualConsole();
+        virtualConsole.on("log", msg => {
+            console.log("[PAGE LOG]:", msg);
+        });
+        virtualConsole.on("error", msg => {
+            console.error("[PAGE ERROR]:", msg);
+        });
+
+        const dom = new JSDOM(html, {
             runScripts: "dangerously",
             resources: "usable",
             url: "http://localhost",
             pretendToBeVisual: true,
-            virtualConsole: new (require("jsdom")).VirtualConsole()
-                .sendTo(console)
+            virtualConsole
         });
 
-        setTimeout(() => {
-            try {
-                const cookies = dom.window.document.cookie;
-                const duration = Date.now() - startTime;
+        // Execution promise
+        const execution = new Promise(resolve => {
+            setTimeout(() => {
+                resolve(dom.window.document.cookie || null);
+            }, 1200);
+        });
 
-                console.log("Execution finished in", duration, "ms");
-                console.log("Cookies:", cookies);
+        // Watchdog timeout
+        const watchdog = new Promise((_, reject) => {
+            setTimeout(() => {
+                reject(new Error("Execution timeout exceeded"));
+            }, 3000);
+        });
 
-                res.status(200).json({
+        const cookies = await Promise.race([execution, watchdog]);
+
+        const duration = Date.now() - startTime;
+
+        console.log("Execution finished in", duration, "ms");
+        console.log("Cookies:", cookies);
+
+        res.status(200).json({
+            success: true,
+            executionTimeMs: duration,
+            cookies: cookies,
+            renderedHtml: dom.serialize()
+        });
+
+    } catch (err) {
+        console.error("Execution error:", err);
+        res.status(500).json({
+            success: false,
+            error: "Execution failed",
+            details: err.message
+        });
+    }
+});
+
+app.listen(PORT, '127.0.0.1', () => {
+    console.log("Server running at http://127.0.0.1:" + PORT);
+});                res.status(200).json({
                     success: true,
                     executionTimeMs: duration,
                     cookies: cookies || null
